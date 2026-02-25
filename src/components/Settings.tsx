@@ -1,17 +1,33 @@
+import { useEffect, useState } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useUIStore } from "../stores/uiStore";
+import { getSetting, setSetting } from "../services/db";
 
 function Settings() {
   const { settings, updateSetting } = useSettingsStore();
   const navigateTo = useUIStore((s) => s.navigateTo);
   const showToast = useUIStore((s) => s.showToast);
+  const [loggedInEmail, setLoggedInEmail] = useState("");
+
+  useEffect(() => {
+    getSetting("imap_email").then((v) => setLoggedInEmail(v ?? ""));
+  }, []);
+
+  const handleLogout = async () => {
+    await setSetting("imap_email", "");
+    await setSetting("imap_password", "");
+    await setSetting("imap_host", "");
+    await setSetting("imap_port", "");
+    showToast("로그아웃 되었습니다");
+    navigateTo("login");
+  };
 
   return (
     <div className="flex flex-col h-screen">
       {/* Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
         <button
-          onClick={() => navigateTo("mail_list")}
+          onClick={() => navigateTo("projects")}
           className="text-zinc-400 hover:text-white transition-colors text-sm cursor-pointer"
         >
           뒤로
@@ -21,6 +37,23 @@ function Settings() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Account */}
+        <section>
+          <h2 className="text-sm font-semibold text-zinc-300 mb-3">계정</h2>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">로그인 계정</span>
+              <span className="text-sm text-white">{loggedInEmail}</span>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="w-full py-2 text-sm text-red-400 hover:text-red-300 border border-zinc-700 hover:border-red-400/30 rounded-lg transition-colors cursor-pointer"
+            >
+              로그아웃
+            </button>
+          </div>
+        </section>
+
         {/* Polling */}
         <section>
           <h2 className="text-sm font-semibold text-zinc-300 mb-3">메일 확인</h2>
@@ -44,30 +77,6 @@ function Settings() {
                 </span>
               </div>
             </label>
-
-            <label className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">업무 시작</span>
-              <input
-                type="time"
-                value={settings.work_hours_start}
-                onChange={(e) =>
-                  updateSetting("work_hours_start", e.target.value)
-                }
-                className="bg-zinc-800 text-white text-sm rounded px-2 py-1 border border-zinc-700"
-              />
-            </label>
-
-            <label className="flex items-center justify-between">
-              <span className="text-sm text-zinc-400">업무 종료</span>
-              <input
-                type="time"
-                value={settings.work_hours_end}
-                onChange={(e) =>
-                  updateSetting("work_hours_end", e.target.value)
-                }
-                className="bg-zinc-800 text-white text-sm rounded px-2 py-1 border border-zinc-700"
-              />
-            </label>
           </div>
         </section>
 
@@ -85,34 +94,6 @@ function Settings() {
               className="w-4 h-4 accent-emerald-500"
             />
           </label>
-        </section>
-
-        {/* Company Domain */}
-        <section>
-          <h2 className="text-sm font-semibold text-zinc-300 mb-3">회사 설정</h2>
-          <div className="space-y-3">
-            <label className="block">
-              <span className="text-sm text-zinc-400 block mb-1">
-                회사 도메인
-              </span>
-              <input
-                type="text"
-                placeholder="example.com"
-                value={settings.company_domain}
-                onChange={(e) =>
-                  updateSetting("company_domain", e.target.value)
-                }
-                className="w-full bg-zinc-800 text-white text-sm rounded px-3 py-2 border border-zinc-700 placeholder:text-zinc-600"
-              />
-            </label>
-
-            <button
-              onClick={() => navigateTo("login")}
-              className="w-full py-2 text-sm text-zinc-400 hover:text-white border border-zinc-700 rounded-lg transition-colors cursor-pointer"
-            >
-              IMAP 계정 변경
-            </button>
-          </div>
         </section>
 
         {/* AI Settings */}
@@ -187,13 +168,6 @@ function Settings() {
             </label>
           </div>
         </section>
-
-        <button
-          onClick={() => showToast("설정이 저장되었습니다")}
-          className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-lg transition-colors cursor-pointer"
-        >
-          저장
-        </button>
       </div>
     </div>
   );

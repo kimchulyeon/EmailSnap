@@ -1,5 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
-import type { Mail, CategoryRule, MailCategory } from "../types";
+import type { Mail, CategoryRule, Project } from "../types";
+import { PROJECT_COLORS } from "../types";
 
 let db: Database | null = null;
 
@@ -46,6 +47,42 @@ async function initTables(database: Database) {
       value TEXT
     )
   `);
+
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Migration: add project_id to mails if not exists
+  try {
+    await database.execute(
+      "ALTER TABLE mails ADD COLUMN project_id INTEGER REFERENCES projects(id)"
+    );
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add keywords to projects
+  try {
+    await database.execute(
+      "ALTER TABLE projects ADD COLUMN keywords TEXT DEFAULT '[]'"
+    );
+  } catch {
+    // Column already exists
+  }
+
+  // Migration: add message_id to mails
+  try {
+    await database.execute(
+      "ALTER TABLE mails ADD COLUMN message_id TEXT DEFAULT ''"
+    );
+  } catch {
+    // Column already exists
+  }
 
   // Insert default category rules if empty
   const rules = await database.select<CategoryRule[]>(
@@ -122,8 +159,8 @@ export async function insertMail(
 ): Promise<boolean> {
   const database = await getDb();
   try {
-    await database.execute(
-      "INSERT OR IGNORE INTO mails (id, sender_name, sender_email, subject, received_at, category, web_link, notified, is_read) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    const result = await database.execute(
+      "INSERT OR IGNORE INTO mails (id, sender_name, sender_email, subject, received_at, category, web_link, notified, is_read, message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         mail.id,
         mail.sender_name,
@@ -134,25 +171,32 @@ export async function insertMail(
         mail.web_link,
         mail.notified ? 1 : 0,
         mail.is_read ? 1 : 0,
+        mail.message_id || "",
       ]
     );
-    return true;
+    return result.rowsAffected > 0;
   } catch {
     return false;
   }
 }
 
-export async function getMails(category?: MailCategory): Promise<Mail[]> {
+export async function getMailsByProject(
+  filter: number | "all" | "unassigned"
+): Promise<Mail[]> {
   const database = await getDb();
-  let query = "SELECT * FROM mails";
-  const params: string[] = [];
+  let query: string;
+  let params: (string | number)[] = [];
 
-  if (category && category !== ("all" as string)) {
-    query += " WHERE category = ?";
-    params.push(category);
+  if (filter === "all") {
+    query = "SELECT * FROM mails ORDER BY received_at DESC";
+  } else if (filter === "unassigned") {
+    query =
+      "SELECT * FROM mails WHERE project_id IS NULL ORDER BY received_at DESC";
+  } else {
+    query =
+      "SELECT * FROM mails WHERE project_id = ? ORDER BY received_at DESC";
+    params = [filter];
   }
-
-  query += " ORDER BY received_at DESC";
 
   const rows = await database.select<Mail[]>(query, params);
   return rows.map((row) => ({
@@ -169,6 +213,24 @@ export async function markAsRead(mailId: string): Promise<void> {
   ]);
 }
 
+export async function markAllAsReadByProject(
+  filter: number | "all" | "unassigned"
+): Promise<void> {
+  const database = await getDb();
+  if (filter === "all") {
+    await database.execute("UPDATE mails SET is_read = 1 WHERE is_read = 0");
+  } else if (filter === "unassigned") {
+    await database.execute(
+      "UPDATE mails SET is_read = 1 WHERE project_id IS NULL AND is_read = 0"
+    );
+  } else {
+    await database.execute(
+      "UPDATE mails SET is_read = 1 WHERE project_id = ? AND is_read = 0",
+      [filter]
+    );
+  }
+}
+
 export async function getLastReceivedTime(): Promise<string | null> {
   const database = await getDb();
   const result = await database.select<{ max_time: string | null }[]>(
@@ -183,6 +245,128 @@ export async function cleanupOldMails(days: number): Promise<void> {
     "DELETE FROM mails WHERE created_at < datetime('now', ?)",
     [`-${days} days`]
   );
+}
+
+// ── Projects ──
+
+export async function getProjects(): Promise<Project[]> {
+  const database = await getDb();
+  return database.select<Project[]>(`
+    SELECT
+      p.id,
+      p.name,
+      p.color,
+      COUNT(m.id) as mail_count,
+      COALESCE(SUM(CASE WHEN m.is_read = 0 THEN 1 ELSE 0 END), 0) as unread_count,
+      MAX(m.received_at) as latest_mail_at
+    FROM projects p
+    LEFT JOIN mails m ON m.project_id = p.id
+    GROUP BY p.id
+    ORDER BY MAX(m.received_at) DESC NULLS LAST
+  `);
+}
+
+export async function getOrCreateProject(name: string): Promise<number> {
+  const database = await getDb();
+
+  const existing = await database.select<{ id: number }[]>(
+    "SELECT id FROM projects WHERE name = ?",
+    [name]
+  );
+  if (existing.length > 0) return existing[0].id;
+
+  const countResult = await database.select<{ cnt: number }[]>(
+    "SELECT COUNT(*) as cnt FROM projects"
+  );
+  const color =
+    PROJECT_COLORS[(countResult[0]?.cnt ?? 0) % PROJECT_COLORS.length];
+
+  const result = await database.execute(
+    "INSERT INTO projects (name, color) VALUES (?, ?)",
+    [name, color]
+  );
+  return result.lastInsertId!;
+}
+
+export async function assignMailToProject(
+  mailId: string,
+  projectId: number
+): Promise<void> {
+  const database = await getDb();
+  await database.execute("UPDATE mails SET project_id = ? WHERE id = ?", [
+    projectId,
+    mailId,
+  ]);
+}
+
+export async function getProjectNames(): Promise<string[]> {
+  const database = await getDb();
+  const rows = await database.select<{ name: string }[]>(
+    "SELECT name FROM projects ORDER BY name"
+  );
+  return rows.map((r) => r.name);
+}
+
+export async function getProjectsForMatching(): Promise<
+  { id: number; name: string; keywords: string[] }[]
+> {
+  const database = await getDb();
+  const rows = await database.select<
+    { id: number; name: string; keywords: string }[]
+  >("SELECT id, name, keywords FROM projects");
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    keywords: (() => {
+      try {
+        return JSON.parse(r.keywords || "[]");
+      } catch {
+        return [];
+      }
+    })(),
+  }));
+}
+
+export async function updateProjectKeywords(
+  projectId: number,
+  keywords: string[]
+): Promise<void> {
+  const database = await getDb();
+  await database.execute("UPDATE projects SET keywords = ? WHERE id = ?", [
+    JSON.stringify(keywords),
+    projectId,
+  ]);
+}
+
+export async function getUnassignedMails(): Promise<
+  Pick<Mail, "id" | "subject" | "sender_email">[]
+> {
+  const database = await getDb();
+  return database.select(
+    "SELECT id, subject, sender_email FROM mails WHERE project_id IS NULL ORDER BY received_at DESC"
+  );
+}
+
+export async function getTotalMailStats(): Promise<{
+  total: number;
+  unread: number;
+}> {
+  const database = await getDb();
+  const rows = await database.select<{ total: number; unread: number }[]>(
+    "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread FROM mails"
+  );
+  return { total: rows[0]?.total ?? 0, unread: rows[0]?.unread ?? 0 };
+}
+
+export async function getUnassignedMailStats(): Promise<{
+  total: number;
+  unread: number;
+}> {
+  const database = await getDb();
+  const rows = await database.select<{ total: number; unread: number }[]>(
+    "SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END), 0) as unread FROM mails WHERE project_id IS NULL"
+  );
+  return { total: rows[0]?.total ?? 0, unread: rows[0]?.unread ?? 0 };
 }
 
 // ── Category Rules ──

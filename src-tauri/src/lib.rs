@@ -24,9 +24,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            #[cfg(desktop)]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            // TODO: updater 플러그인은 배포 시 endpoints 설정 후 활성화
+            // #[cfg(desktop)]
+            // app.handle()
+            //     .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             // -- System Tray --
             let show_item =

@@ -68,3 +68,66 @@ export async function classifyBatchWithAI(
     })
   );
 }
+
+// ── Project Analysis ──
+
+export interface ProjectAssignment {
+  mail_id: string;
+  project_name: string;
+  keywords: string[];
+}
+
+export async function analyzeMailProjects(
+  apiKey: string,
+  mails: { id: string; subject: string }[],
+  existingProjects: string[] = []
+): Promise<ProjectAssignment[]> {
+  if (mails.length === 0) return [];
+
+  const systemPrompt = `당신은 이메일 제목을 분석하여 프로젝트/업무 단위로 그룹핑하는 전문가입니다.
+
+핵심 규칙 (우선순위 순):
+1. 기존 프로젝트 목록이 주어지면, 반드시 기존 프로젝트에 먼저 배정하세요
+2. 기존 프로젝트와 비슷한 주제면 반드시 기존 프로젝트 이름을 "정확히 그대로" 사용하세요 (절대 유사한 새 이름 금지)
+3. 기존 프로젝트에 전혀 해당하지 않는 완전히 새로운 주제일 때만 새 프로젝트를 만드세요
+4. 프로젝트 이름은 간결하게 (예: "인프라 구축", "앱 리뉴얼")
+5. [대괄호]나 Re:/Fwd: 접두사에서 프로젝트명을 추출하세요
+6. 각 프로젝트에 대해 이메일 제목에서 자주 등장하는 핵심 키워드 3~5개를 추출하세요
+7. 반드시 JSON만 응답하세요
+
+응답 형식:
+{
+  "assignments": [
+    { "id": "메일id", "project": "프로젝트명", "keywords": ["키워드1", "키워드2"] }
+  ]
+}`;
+
+  const mailList = mails.map((m) => ({ id: m.id, subject: m.subject }));
+
+  const existingContext =
+    existingProjects.length > 0
+      ? `[필수] 기존 프로젝트 목록 (반드시 우선 사용, 새 프로젝트는 최소화):\n${existingProjects.map((p) => `- ${p}`).join("\n")}\n\n`
+      : "";
+
+  const userPrompt = `${existingContext}분류할 이메일:\n${JSON.stringify(mailList, null, 2)}`;
+
+  try {
+    const response = await invoke<string>("call_groq_api", {
+      apiKey,
+      systemPrompt,
+      userPrompt,
+    });
+
+    const parsed = JSON.parse(response);
+    return (parsed.assignments || []).map(
+      (a: { id: string; project: string; keywords?: string[] }) => ({
+        mail_id: String(a.id),
+        project_name: String(a.project || ""),
+        keywords: Array.isArray(a.keywords) ? a.keywords.map(String) : [],
+      })
+    );
+  } catch (err) {
+    console.error("[EmailSnap] AI project analysis error:", err);
+    return [];
+  }
+}

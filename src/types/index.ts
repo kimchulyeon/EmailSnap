@@ -10,6 +10,8 @@ export interface Mail {
   web_link: string;
   notified: boolean;
   is_read: boolean;
+  project_id: number | null;
+  message_id: string;
   created_at: string;
 }
 
@@ -32,16 +34,29 @@ export interface CategoryRule {
   is_default: boolean;
 }
 
+// ── Project ──
+
+export interface Project {
+  id: number;
+  name: string;
+  color: string;
+  mail_count: number;
+  unread_count: number;
+  latest_mail_at: string | null;
+}
+
+export const PROJECT_COLORS = [
+  "#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#8B5CF6",
+  "#EC4899", "#14B8A6", "#F97316", "#6366F1", "#06B6D4",
+];
+
 // ── Settings ──
 
 export interface AppSettings {
-  polling_interval: number; // seconds (30-120)
+  polling_interval: number;
   notifications_enabled: boolean;
-  work_hours_start: string; // 'HH:MM'
-  work_hours_end: string; // 'HH:MM'
-  auto_cleanup_days: number; // default 30
+  auto_cleanup_days: number;
   launch_on_startup: boolean;
-  company_domain: string; // e.g. 'mycompany.com'
   groq_api_key: string;
   ai_categorization: boolean;
 }
@@ -49,14 +64,15 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   polling_interval: 60,
   notifications_enabled: true,
-  work_hours_start: "09:00",
-  work_hours_end: "18:00",
   auto_cleanup_days: 30,
   launch_on_startup: false,
-  company_domain: "",
   groq_api_key: "",
   ai_categorization: false,
 };
+
+export function extractDomain(email: string): string {
+  return email.split("@")[1]?.toLowerCase() || "";
+}
 
 // ── Category Display ──
 
@@ -91,5 +107,5 @@ export interface ImapCredentials {
 
 // ── View ──
 
-export type ViewType = "login" | "mail_list" | "settings";
-export type CategoryFilter = MailCategory | "all";
+export type ViewType = "login" | "projects" | "project_mails" | "settings";
+export type ProjectFilter = number | "all" | "unassigned";

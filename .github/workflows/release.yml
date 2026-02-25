@@ -1,0 +1,163 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  bump-version:
+    if: "!contains(github.event.head_commit.message, 'chore: bump version')"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_version: ${{ steps.bump.outputs.new_version }}
+      new_tag: ${{ steps.bump.outputs.new_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get current version and bump
+        id: bump
+        run: |
+          CURRENT=$(jq -r '.version' package.json)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "new_version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "new_tag=v${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "Bumping version: ${CURRENT} -> ${NEW_VERSION}"
+
+      - name: Update version in package.json
+        run: |
+          jq ".version = \"${{ steps.bump.outputs.new_version }}\"" package.json > tmp.json && mv tmp.json package.json
+
+      - name: Update version in src-tauri/tauri.conf.json
+        run: |
+          jq ".version = \"${{ steps.bump.outputs.new_version }}\"" src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+
+      - name: Update version in src-tauri/Cargo.toml
+        run: |
+          sed -i "s/^version = \".*\"/version = \"${{ steps.bump.outputs.new_version }}\"/" src-tauri/Cargo.toml
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+          git tag "${{ steps.bump.outputs.new_tag }}"
+          git push origin main --tags
+
+  build-macos:
+    needs: bump-version
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - args: --target aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+          - args: --target x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.new_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.bump-version.outputs.new_tag }}
+          releaseName: 'EmailSnap ${{ needs.bump-version.outputs.new_tag }}'
+          releaseBody: |
+            EmailSnap ${{ needs.bump-version.outputs.new_tag }} 릴리즈
+
+            ### 다운로드
+            - **macOS (Apple Silicon)**: `.dmg` (aarch64)
+            - **macOS (Intel)**: `.dmg` (x86_64)
+            - **Windows**: `.msi` 또는 `.exe`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+  build-windows:
+    needs: bump-version
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.bump-version.outputs.new_tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.bump-version.outputs.new_tag }}
+          releaseName: 'EmailSnap ${{ needs.bump-version.outputs.new_tag }}'
+          releaseBody: |
+            EmailSnap ${{ needs.bump-version.outputs.new_tag }} 릴리즈
+
+            ### 다운로드
+            - **macOS (Apple Silicon)**: `.dmg` (aarch64)
+            - **macOS (Intel)**: `.dmg` (x86_64)
+            - **Windows**: `.msi` 또는 `.exe`
+          releaseDraft: false
+          prerelease: false

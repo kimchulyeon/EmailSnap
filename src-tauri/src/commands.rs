@@ -110,6 +110,49 @@ pub struct MailMeta {
     pub sender_email: String,
     pub subject: String,
     pub received_at: String,
+    pub message_id: String,
+}
+
+struct PlainAuth {
+    username: String,
+    password: String,
+}
+
+impl imap::Authenticator for PlainAuth {
+    type Response = String;
+    fn process(&self, _data: &[u8]) -> Self::Response {
+        format!("\0{}\0{}", self.username, self.password)
+    }
+}
+
+fn imap_login(
+    host: &str,
+    port: u16,
+    email: &str,
+    password: &str,
+) -> Result<imap::Session<native_tls::TlsStream<std::net::TcpStream>>, String> {
+    let tls = native_tls::TlsConnector::builder()
+        .build()
+        .map_err(|e| format!("TLS error: {}", e))?;
+
+    let client = imap::connect((host, port), host, &tls)
+        .map_err(|e| format!("Connection failed: {}", e))?;
+
+    // Try AUTHENTICATE PLAIN first, fallback to LOGIN
+    let auth = PlainAuth {
+        username: email.to_string(),
+        password: password.to_string(),
+    };
+
+    match client.authenticate("PLAIN", &auth) {
+        Ok(session) => Ok(session),
+        Err((e, client)) => {
+            // Fallback to LOGIN
+            client
+                .login(email, password)
+                .map_err(|_| format!("AUTH_FAILED: {}", e))
+        }
+    }
 }
 
 #[tauri::command]
@@ -120,17 +163,7 @@ pub async fn test_imap_connection(
     password: String,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let tls = native_tls::TlsConnector::builder()
-            .build()
-            .map_err(|e| format!("TLS error: {}", e))?;
-
-        let client = imap::connect((&*host, port), &host, &tls)
-            .map_err(|e| format!("Connection failed: {}", e))?;
-
-        let mut session = client
-            .login(&email, &password)
-            .map_err(|e| format!("Login failed: {}", e.0))?;
-
+        let mut session = imap_login(&host, port, &email, &password)?;
         let _ = session.logout();
         Ok("OK".to_string())
     })
@@ -147,16 +180,7 @@ pub async fn fetch_mails(
     since: Option<String>,
 ) -> Result<Vec<MailMeta>, String> {
     tokio::task::spawn_blocking(move || {
-        let tls = native_tls::TlsConnector::builder()
-            .build()
-            .map_err(|e| format!("TLS error: {}", e))?;
-
-        let client = imap::connect((&*host, port), &host, &tls)
-            .map_err(|e| format!("Connection failed: {}", e))?;
-
-        let mut session = client
-            .login(&email, &password)
-            .map_err(|e| format!("AUTH_FAILED: {}", e.0))?;
+        let mut session = imap_login(&host, port, &email, &password)?;
 
         session
             .select("INBOX")
@@ -176,8 +200,9 @@ pub async fn fetch_mails(
             format!("SINCE {}", seven_days_ago.format("%d-%b-%Y"))
         };
 
+        // Use UID SEARCH for stable IDs (matches NaverWorks nMailId)
         let uids = session
-            .search(&search_query)
+            .uid_search(&search_query)
             .map_err(|e| format!("Search failed: {}", e))?;
 
         if uids.is_empty() {
@@ -196,14 +221,15 @@ pub async fn fetch_mails(
             .collect();
         let uid_set = uid_list.join(",");
 
+        // Use UID FETCH to get mail data by UID
         let messages = session
-            .fetch(&uid_set, "( ENVELOPE INTERNALDATE )")
+            .uid_fetch(&uid_set, "(UID ENVELOPE INTERNALDATE)")
             .map_err(|e| format!("Fetch failed: {}", e))?;
 
         let mut mails: Vec<MailMeta> = Vec::new();
 
         for msg in messages.iter() {
-            let uid = msg.message;
+            let uid = msg.uid.unwrap_or(msg.message);
 
             if let Some(envelope) = msg.envelope() {
                 let subject = envelope
@@ -246,12 +272,19 @@ pub async fn fetch_mails(
                     .map(|d| d.to_rfc3339())
                     .unwrap_or_default();
 
+                let message_id = envelope
+                    .message_id
+                    .as_ref()
+                    .map(|id| String::from_utf8_lossy(id).to_string())
+                    .unwrap_or_default();
+
                 mails.push(MailMeta {
                     mail_id: uid.to_string(),
                     sender_name,
                     sender_email,
                     subject,
                     received_at,
+                    message_id,
                 });
             }
         }

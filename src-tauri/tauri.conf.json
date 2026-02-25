@@ -46,5 +46,12 @@
       "entitlements": null
     }
   },
-  "plugins": {}
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3MDUwNTZEMDUwMkM0Q0EKUldUS3hBSUZiUVVGSndLODFtQ3N5S3hGTUcvd01PRWxTd1lTQXJxTU9lWXRCblZzSGxsZVJiUzMK",
+      "endpoints": [
+        "https://github.com/kimchulyeon/EmailSnap/releases/latest/download/latest.json"
+      ]
+    }
+  }
 }

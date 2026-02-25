@@ -1,47 +1,28 @@
 import { create } from "zustand";
-import type { Mail, MailCategory, CategoryFilter } from "../types";
-import { getMails, markAsRead, insertMail } from "../services/db";
+import type { Mail, ProjectFilter } from "../types";
+import { getMailsByProject, markAsRead, markAllAsReadByProject } from "../services/db";
 
 interface MailState {
   mails: Mail[];
-  filter: CategoryFilter;
   loading: boolean;
 
-  fetchMails: () => Promise<void>;
-  setFilter: (filter: CategoryFilter) => void;
-  addMail: (mail: Omit<Mail, "created_at">) => Promise<boolean>;
+  fetchMails: (filter: ProjectFilter) => Promise<void>;
   markMailAsRead: (id: string) => Promise<void>;
+  markAllAsRead: (filter: ProjectFilter) => Promise<void>;
 }
 
-export const useMailStore = create<MailState>((set, get) => ({
+export const useMailStore = create<MailState>((set) => ({
   mails: [],
-  filter: "all",
   loading: false,
 
-  fetchMails: async () => {
+  fetchMails: async (filter: ProjectFilter) => {
     set({ loading: true });
     try {
-      const filter = get().filter;
-      const category =
-        filter === "all" ? undefined : (filter as MailCategory);
-      const mails = await getMails(category);
+      const mails = await getMailsByProject(filter);
       set({ mails });
     } finally {
       set({ loading: false });
     }
-  },
-
-  setFilter: (filter: CategoryFilter) => {
-    set({ filter });
-    get().fetchMails();
-  },
-
-  addMail: async (mail) => {
-    const inserted = await insertMail(mail);
-    if (inserted) {
-      await get().fetchMails();
-    }
-    return inserted;
   },
 
   markMailAsRead: async (id: string) => {
@@ -50,6 +31,13 @@ export const useMailStore = create<MailState>((set, get) => ({
       mails: state.mails.map((m) =>
         m.id === id ? { ...m, is_read: true } : m
       ),
+    }));
+  },
+
+  markAllAsRead: async (filter: ProjectFilter) => {
+    await markAllAsReadByProject(filter);
+    set((state) => ({
+      mails: state.mails.map((m) => ({ ...m, is_read: true })),
     }));
   },
 }));

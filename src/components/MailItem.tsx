@@ -1,7 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-opener";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { Mail } from "../types";
-import { CATEGORY_CONFIG } from "../types";
 import { useMailStore } from "../stores/mailStore";
 
 interface Props {
@@ -10,17 +8,13 @@ interface Props {
 
 function MailItem({ mail }: Props) {
   const markMailAsRead = useMailStore((s) => s.markMailAsRead);
-  const config = CATEGORY_CONFIG[mail.category] ?? CATEGORY_CONFIG.uncategorized;
 
   const handleClick = async () => {
-    const url = await invoke<string>("open_webmail", {
-      mailId: mail.id,
-    });
-    await open(url);
+    await openUrl(
+      `https://mail.worksmobile.com/read/popup?nMailId=${mail.id}&folderSN=0`
+    );
     await markMailAsRead(mail.id);
   };
-
-  const timeAgo = formatRelativeTime(mail.received_at);
 
   return (
     <li
@@ -30,13 +24,11 @@ function MailItem({ mail }: Props) {
       }`}
     >
       <div className="flex items-start gap-3">
-        {/* Category Badge */}
         <span
-          className="mt-1 shrink-0 w-2 h-2 rounded-full"
-          style={{ backgroundColor: config.color }}
-          title={config.label}
+          className={`mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full ${
+            !mail.is_read ? "bg-emerald-500" : "bg-transparent"
+          }`}
         />
-
         <div className="flex-1 min-w-0">
           {/* Sender + Time */}
           <div className="flex items-center justify-between gap-2 mb-0.5">
@@ -50,7 +42,7 @@ function MailItem({ mail }: Props) {
               {mail.sender_name || mail.sender_email}
             </span>
             <span className="text-[10px] text-zinc-500 shrink-0">
-              {timeAgo}
+              {formatRelativeTime(mail.received_at)}
             </span>
           </div>
 
@@ -63,16 +55,12 @@ function MailItem({ mail }: Props) {
             {mail.subject}
           </p>
 
-          {/* Category Label */}
-          <span
-            className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded"
-            style={{
-              backgroundColor: config.color + "20",
-              color: config.color,
-            }}
-          >
-            {config.label}
-          </span>
+          {/* Urgent badge */}
+          {mail.category === "urgent" && (
+            <span className="inline-block mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+              긴급
+            </span>
+          )}
         </div>
       </div>
     </li>

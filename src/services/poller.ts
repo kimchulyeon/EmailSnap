@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, ImapCredentials, Mail, MailCategory } from "../types";
+import { extractDomain } from "../types";
 import { getLastReceivedTime, insertMail, getCategoryRules, cleanupOldMails } from "./db";
 import { classifyMail } from "./classifier";
-import { classifyWithAI } from "./ai";
 import { sendNotification } from "./notification";
 
 let pollingTimer: ReturnType<typeof setInterval> | null = null;
@@ -18,6 +18,7 @@ export function startPolling(deps: PollerDeps) {
   stopPolling();
   const interval = deps.settings.polling_interval * 1000;
 
+  // Immediately poll once, then set interval
   poll(deps);
   pollingTimer = setInterval(() => poll(deps), interval);
 }
@@ -31,10 +32,13 @@ export function stopPolling() {
 }
 
 async function poll(deps: PollerDeps) {
-  if (!isWithinWorkHours(deps.settings)) return;
+  console.log(`[EmailSnap] poll - ${new Date().toLocaleTimeString()}`);
+
+  const companyDomain = extractDomain(deps.credentials.email);
 
   try {
     const lastTime = await getLastReceivedTime();
+    console.log(`[EmailSnap] fetching mails since: ${lastTime ?? "all (first run)"}`);
 
     const rawMails = await invoke<
       {
@@ -43,6 +47,7 @@ async function poll(deps: PollerDeps) {
         sender_email: string;
         subject: string;
         received_at: string;
+        message_id: string;
       }[]
     >("fetch_mails", {
       host: deps.credentials.host,
@@ -51,6 +56,8 @@ async function poll(deps: PollerDeps) {
       password: deps.credentials.password,
       since: lastTime,
     });
+
+    console.log(`[EmailSnap] fetched ${rawMails.length} mails from IMAP`);
 
     if (rawMails.length === 0) {
       errorCount = 0;
@@ -61,28 +68,8 @@ async function poll(deps: PollerDeps) {
     const newMails: Mail[] = [];
 
     for (const raw of rawMails) {
-      let category: MailCategory;
-
-      if (
-        deps.settings.ai_categorization &&
-        deps.settings.groq_api_key
-      ) {
-        try {
-          const aiResult = await classifyWithAI(
-            deps.settings.groq_api_key,
-            raw.subject,
-            raw.sender_email
-          );
-          category =
-            aiResult.confidence >= 0.7
-              ? aiResult.category
-              : classifyMail(raw, rules, deps.settings.company_domain);
-        } catch {
-          category = classifyMail(raw, rules, deps.settings.company_domain);
-        }
-      } else {
-        category = classifyMail(raw, rules, deps.settings.company_domain);
-      }
+      // Rule-based category only (AI is used for project assignment, not per-mail classification)
+      const category: MailCategory = classifyMail(raw, rules, companyDomain);
 
       const mail: Omit<Mail, "created_at"> = {
         id: raw.mail_id,
@@ -94,6 +81,8 @@ async function poll(deps: PollerDeps) {
         web_link: "https://mail.worksmobile.com",
         notified: false,
         is_read: false,
+        project_id: null,
+        message_id: raw.message_id,
       };
 
       const inserted = await insertMail(mail);
@@ -115,6 +104,7 @@ async function poll(deps: PollerDeps) {
   } catch (err) {
     errorCount++;
     const errorMsg = String(err);
+    console.error(`[EmailSnap] poll error (${errorCount}):`, errorMsg);
 
     if (errorMsg.includes("AUTH_FAILED")) {
       stopPolling();
@@ -133,14 +123,3 @@ async function poll(deps: PollerDeps) {
   }
 }
 
-function isWithinWorkHours(settings: AppSettings): boolean {
-  const now = new Date();
-  const [startH, startM] = settings.work_hours_start.split(":").map(Number);
-  const [endH, endM] = settings.work_hours_end.split(":").map(Number);
-
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  const startMinutes = startH * 60 + startM;
-  const endMinutes = endH * 60 + endM;
-
-  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
-}
