@@ -25,7 +25,7 @@ function App() {
         await loadSettings();
         await loadRules();
 
-        // Request notification permission on startup
+        // Request notification permission
         try {
           const granted = await isPermissionGranted();
           console.log("[EmailSnap] notification permission:", granted);
