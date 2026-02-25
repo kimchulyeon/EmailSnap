@@ -1,6 +1,6 @@
 [package]
 name = "emailsnap"
-version = "0.1.0"
+version = "0.1.1"
 description = "스마트 메일 알림 데스크톱 앱"
 authors = ["you"]
 edition = "2021"
