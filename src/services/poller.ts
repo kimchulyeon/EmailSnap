@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AppSettings, Mail, MailCategory } from "../types";
+import type { AppSettings, ImapCredentials, Mail, MailCategory } from "../types";
 import { getLastReceivedTime, insertMail, getCategoryRules, cleanupOldMails } from "./db";
 import { classifyMail } from "./classifier";
 import { classifyWithAI } from "./ai";
@@ -9,8 +9,7 @@ let pollingTimer: ReturnType<typeof setInterval> | null = null;
 let errorCount = 0;
 
 interface PollerDeps {
-  accessToken: string;
-  userId: string;
+  credentials: ImapCredentials;
   settings: AppSettings;
   onNewMails?: (mails: Mail[]) => void;
 }
@@ -32,7 +31,6 @@ export function stopPolling() {
 }
 
 async function poll(deps: PollerDeps) {
-  // Work hours check
   if (!isWithinWorkHours(deps.settings)) return;
 
   try {
@@ -47,8 +45,10 @@ async function poll(deps: PollerDeps) {
         received_at: string;
       }[]
     >("fetch_mails", {
-      accessToken: deps.accessToken,
-      userId: deps.userId,
+      host: deps.credentials.host,
+      port: deps.credentials.port,
+      email: deps.credentials.email,
+      password: deps.credentials.password,
       since: lastTime,
     });
 
@@ -63,7 +63,6 @@ async function poll(deps: PollerDeps) {
     for (const raw of rawMails) {
       let category: MailCategory;
 
-      // AI classification if enabled
       if (
         deps.settings.ai_categorization &&
         deps.settings.groq_api_key
@@ -92,7 +91,7 @@ async function poll(deps: PollerDeps) {
         subject: raw.subject,
         received_at: raw.received_at,
         category,
-        web_link: `https://mail.worksmobile.com/mail/read/${raw.mail_id}`,
+        web_link: "https://mail.worksmobile.com",
         notified: false,
         is_read: false,
       };
@@ -103,7 +102,6 @@ async function poll(deps: PollerDeps) {
       }
     }
 
-    // Send notifications
     if (deps.settings.notifications_enabled && newMails.length > 0) {
       for (const mail of newMails) {
         await sendNotification(mail);
@@ -113,26 +111,23 @@ async function poll(deps: PollerDeps) {
     deps.onNewMails?.(newMails);
     errorCount = 0;
 
-    // Auto cleanup
     await cleanupOldMails(deps.settings.auto_cleanup_days);
   } catch (err) {
     errorCount++;
     const errorMsg = String(err);
 
-    if (errorMsg === "UNAUTHORIZED") {
-      // TODO: trigger token refresh or re-login
+    if (errorMsg.includes("AUTH_FAILED")) {
       stopPolling();
       return;
     }
 
-    // Exponential backoff: after 3 consecutive failures, double the interval
     if (errorCount >= 3) {
       stopPolling();
       const backoffInterval =
         deps.settings.polling_interval * 1000 * Math.pow(2, errorCount - 2);
       pollingTimer = setInterval(
         () => poll(deps),
-        Math.min(backoffInterval, 600000) // max 10 min
+        Math.min(backoffInterval, 600000)
       );
     }
   }

@@ -90,18 +90,29 @@ function Settings() {
         {/* Company Domain */}
         <section>
           <h2 className="text-sm font-semibold text-zinc-300 mb-3">회사 설정</h2>
-          <label className="block">
-            <span className="text-sm text-zinc-400 block mb-1">회사 도메인</span>
-            <input
-              type="text"
-              placeholder="example.com"
-              value={settings.company_domain}
-              onChange={(e) =>
-                updateSetting("company_domain", e.target.value)
-              }
-              className="w-full bg-zinc-800 text-white text-sm rounded px-3 py-2 border border-zinc-700 placeholder:text-zinc-600"
-            />
-          </label>
+          <div className="space-y-3">
+            <label className="block">
+              <span className="text-sm text-zinc-400 block mb-1">
+                회사 도메인
+              </span>
+              <input
+                type="text"
+                placeholder="example.com"
+                value={settings.company_domain}
+                onChange={(e) =>
+                  updateSetting("company_domain", e.target.value)
+                }
+                className="w-full bg-zinc-800 text-white text-sm rounded px-3 py-2 border border-zinc-700 placeholder:text-zinc-600"
+              />
+            </label>
+
+            <button
+              onClick={() => navigateTo("login")}
+              className="w-full py-2 text-sm text-zinc-400 hover:text-white border border-zinc-700 rounded-lg transition-colors cursor-pointer"
+            >
+              IMAP 계정 변경
+            </button>
+          </div>
         </section>
 
         {/* AI Settings */}

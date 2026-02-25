@@ -56,6 +56,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::call_groq_api,
+            commands::test_imap_connection,
             commands::fetch_mails,
             commands::open_webmail,
         ])

@@ -80,13 +80,13 @@ export interface AIClassificationResult {
   reason: string;
 }
 
-// ── Auth ──
+// ── Auth (IMAP) ──
 
-export interface AuthTokens {
-  access_token: string;
-  refresh_token: string;
-  expires_at: number;
-  user_id: string;
+export interface ImapCredentials {
+  host: string;
+  port: number;
+  email: string;
+  password: string;
 }
 
 // ── View ──
